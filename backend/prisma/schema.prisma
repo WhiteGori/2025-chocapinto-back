@@ -3,8 +3,8 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
-  url      = "file:./dev.db"
+  provider = "postgresql"
+  url      = "postgresql://chocapintodb_user:HyKDWC8jgiKCQvp8pIWsx0m80XrourO4@dpg-d3c4kl0gjchc738tsv3g-a.oregon-postgres.render.com/chocapintodb"
 }
 
 model User {
