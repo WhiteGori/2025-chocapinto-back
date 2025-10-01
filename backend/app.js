@@ -1,6 +1,7 @@
 const express = require("express");
 const cors = require("cors");
 const prisma = require("./db"); 
+const bcrypt = require("bcryptjs"); 
 
 const app = express();
 
@@ -23,6 +24,7 @@ app.get("/user/:idOrUsername", async (req, res) => {
     res.status(500).json({ success: false, message: "Error del servidor" });
   }
 });
+/** 
 // Registro
 app.post("/register", async (req, res) => {
   const { username, email, password } = req.body;
@@ -43,8 +45,42 @@ app.post("/register", async (req, res) => {
       res.status(500).json({ success: false, message: "Error del servidor", error: error.message });
     }
   }
-});
+});*/
+app.post("/register", async (req, res) => {
+  const { username, email, password } = req.body;
 
+  if (!username || !email || !password) {
+    return res.status(400).json({ success: false, message: "Faltan datos" });
+  }
+
+  try {
+    // 1. Generar un salt (semilla aleatoria)
+    const salt = await bcrypt.genSalt(10);
+    
+    // 2. Hashear la contraseña usando el salt
+    const hashedPassword = await bcrypt.hash(password, salt); // << PASO CRÍTICO
+
+    // 3. Guardar el usuario con la contraseña HASHEADA
+    const user = await prisma.user.create({
+      data: { 
+        username, 
+        email, 
+        password: hashedPassword, // << AHORA SE GUARDA EL HASH SEGURO
+        role: "reader" 
+      }
+    });
+
+    res.status(201).json({ success: true, message: "Usuario registrado con éxito", user });
+  } catch (error) {
+    if (error.code === "P2002") {
+      res.status(400).json({ success: false, message: "El usuario ya existe" });
+    } else {
+      console.error("Error al registrar:", error);
+      res.status(500).json({ success: false, message: "Error del servidor", error: error.message });
+    }
+  }
+});
+/*
 // Login
 app.post("/login", async (req, res) => {
   const { username, password } = req.body;
@@ -55,8 +91,38 @@ app.post("/login", async (req, res) => {
   }
 
   res.json({ success: true, message: "Login exitoso", role: user.role, id: user.id });
-});
+});*/
 
+// app.js (CÓDIGO CORREGIDO para el Login)
+
+app.post("/login", async (req, res) => {
+  const { username, password } = req.body;
+
+  try {
+    const user = await prisma.user.findUnique({ where: { username } });
+
+    // 1. Verificar si el usuario existe
+    if (!user) {
+      // Usar un mensaje genérico por seguridad
+      return res.status(401).json({ success: false, message: "Credenciales inválidas" });
+    }
+
+    // 2. 🔑 COMPARACIÓN CORRECTA DE HASH: 
+    // Compara el texto plano (password) con el hash guardado (user.password)
+    const isPasswordValid = await bcrypt.compare(password, user.password); // <-- ESTO ES LO CRÍTICO
+
+    if (!isPasswordValid) {
+      return res.status(401).json({ success: false, message: "Credenciales inválidas" });
+    }
+
+    // 3. Login exitoso
+    res.json({ success: true, message: "Login exitoso", role: user.role, id: user.id });
+
+  } catch (error) {
+    console.error("Error en login:", error);
+    res.status(500).json({ success: false, message: "Error interno del servidor" });
+  }
+});
 // Actualizar usuario
 app.put("/updateUser", async (req, res) => {
   try {
@@ -112,9 +178,8 @@ app.post("/deleteUser", async (req, res) => {
 
 // Crear Club
 app.post("/createClub", async (req, res) => {
-    console.log("Body recibido:", req.body); 
   try {
-    const { name, description, ownerUsername } = req.body;
+    const { name, description, ownerUsername, imagen } = req.body;
 
     if (!name || !description || !ownerUsername) {
       return res.status(400).json({ success: false, message: "Faltan datos" });
@@ -122,20 +187,22 @@ app.post("/createClub", async (req, res) => {
 
     const owner = await prisma.user.findUnique({ where: { username: ownerUsername } });
     if (!owner) return res.status(404).json({ success: false, message: "Usuario no encontrado" });
-    console.log("Owner encontrado:", owner);
-    // Crear club
+
+    // Imagen por defecto si no mandan una
+    const defaultImg = "https://img.lovepik.com/png/20231109/book-cartoon-illustration-school-start-reading-reading-book_539915_wh860.png";
+
     const club = await prisma.club.create({
       data: {
         name,
         description,
         id_owner: owner.id,
+        imagen: imagen || defaultImg,
         members: {
-          connect: { id: owner.id } // el creador se agrega como miembro
+          connect: { id: owner.id }
         }
       },
-      include: { members: true } // opcional, para devolver los miembros
+      include: { members: true }
     });
-
 
     res.json({ success: true, club });
   } catch (error) {
@@ -143,6 +210,17 @@ app.post("/createClub", async (req, res) => {
     res.status(500).json({ success: false, message: "Error del servidor" });
   }
 });
+app.delete("/deleteClub/:id", async (req, res) => {
+  const clubId = Number(req.params.id);
+  if (!clubId) return res.status(400).json({ success: false, message: "ID inválido" });
+  try {
+    await prisma.club.delete({ where: { id: clubId } });
+    res.json({ success: true, message: "Club eliminado" });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Error del servidor" });
+  }
+});
+
 // Obtener todos los clubes con info de miembros
 app.get("/clubs", async (req, res) => {
   try {
@@ -204,28 +282,26 @@ app.get("/club/:id", async (req, res) => {
     const club = await prisma.club.findUnique({
       where: { id: clubId },
       include: {
-        readBooks: true,
+        readBooks: {
+          include: { categorias: true }
+        },
         solicitudes: {
           include: { user: true }
         },
         members: true
       }
     });
-    // console.log("GET /club/:id", { clubId, club });
     if (!club) return res.status(404).json({ success: false, message: "Club no encontrado" });
-    // Si no hay solicitudes, devolver array vacío
     const solicitudes = club.solicitudes ? club.solicitudes.map(s => ({
       id: s.id,
       username: s.user.username,
       estado: s.estado,
       createdAt: s.createdAt
     })) : [];
-    // Buscar nombre del owner
     let ownerName = null;
     if (club.owner) {
       ownerName = club.owner.username;
     } else {
-      // Si no existe la relación, buscar manualmente
       const ownerUser = await prisma.user.findUnique({ where: { id: club.id_owner } });
       ownerName = ownerUser ? ownerUser.username : null;
     }
@@ -237,7 +313,15 @@ app.get("/club/:id", async (req, res) => {
         description: club.description,
         id_owner: club.id_owner,
         ownerName,
-        readBooks: club.readBooks,
+        imagen: club.imagen, // <-- Agregado aquí
+        readBooks: club.readBooks.map(book => ({
+          id: book.id,
+          title: book.title,
+          author: book.author,
+          portada: book.portada,
+          id_api: book.id_api,
+          categorias: book.categorias ? book.categorias.map(cat => ({ id: cat.id, nombre: cat.nombre })) : []
+        })),
         solicitudes,
         members: club.members ? club.members.map(m => ({ id: m.id, username: m.username })) : []
       },
@@ -251,20 +335,26 @@ app.get("/club/:id", async (req, res) => {
 
 app.post("/club/:id/addBook", async (req, res) => {
   const clubId = Number(req.params.id);
-  const { title, author, id_api, thumbnail } = req.body;
-  console.log("Datos recibidos en /club/:id/addBook:", { clubId, title, author, id_api, thumbnail });
+  const { title, author, id_api, thumbnail, categorias } = req.body;
+  console.log("Datos recibidos en /club/:id/addBook:", { clubId, title, author, id_api, thumbnail, categorias });
   if (!clubId || !title) {
     return res.status(400).json({ success: false, message: "Faltan datos obligatorios" });
   }
   try {
-    // Crear el libro y asociarlo al club
+    // Conectar categorías existentes (por id)
+    let categoriasConnect = [];
+    if (Array.isArray(categorias)) {
+      categoriasConnect = categorias.map(id => ({ id: Number(id) }));
+    }
+    // Crear el libro y asociarlo al club y categorías
     const book = await prisma.book.create({
       data: {
         title,
         author,
         id_api: id_api ? Number(id_api) : undefined,
         portada: thumbnail || undefined,
-        clubs: { connect: { id: clubId } }
+        clubs: { connect: { id: clubId } },
+        categorias: { connect: categoriasConnect }
       }
     });
     res.json({ success: true, message: "Libro agregado", book });
@@ -405,6 +495,221 @@ app.delete("/club/:clubId/removeMember/:userId", async (req, res) => {
         res.status(500).json({ success: false, message: "Error al eliminar usuario" });
     }
 });
+// Listar todas las categorías
+const categoriasEstaticas = [
+  "Ficción",
+  "No Ficción",
+  "Ciencia Ficción",
+  "Fantasía",
+  "Ensayo"
+];
+
+app.get("/categorias", async (req, res) => {
+  try {
+    // Insertar las categorías por defecto si no existen
+    for (const nombre of categoriasEstaticas) {
+      await prisma.categoria.upsert({
+        where: { nombre },
+        update: {},
+        create: { nombre }
+      });
+    }
+    const categorias = await prisma.categoria.findMany();
+    res.json({ success: true, categorias });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Error al obtener categorías" });
+  }
+});
+
+// Crear nueva categoría
+app.post("/categorias", async (req, res) => {
+  const { nombre } = req.body;
+  if (!nombre) return res.status(400).json({ success: false, message: "Falta el nombre" });
+  try {
+    const categoria = await prisma.categoria.create({ data: { nombre } });
+    res.json({ success: true, categoria });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Error al crear categoría" });
+  }
+});
+// Editar categoría
+app.put("/categorias/:id", async (req, res) => {
+  const categoriaId = Number(req.params.id);
+  const { nombre } = req.body;
+
+  if (!categoriaId || !nombre) {
+    return res.status(400).json({ success: false, message: "Faltan datos" });
+  }
+
+  try {
+    const categoria = await prisma.categoria.findUnique({ where: { id: categoriaId } });
+    if (!categoria) {
+      return res.status(404).json({ success: false, message: "Categoría no encontrada" });
+    }
+
+    // Bloquear edición de estáticas
+    if (categoriasEstaticas.includes(categoria.nombre)) {
+      return res.status(403).json({ success: false, message: "No se puede editar esta categoría predeterminada" });
+    }
+
+    const updated = await prisma.categoria.update({
+      where: { id: categoriaId },
+      data: { nombre }
+    });
+    res.json({ success: true, categoria: updated });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Error al editar categoría" });
+  }
+});
+
+// Eliminar categoría
+app.delete("/categorias/:id", async (req, res) => {
+  const categoriaId = Number(req.params.id);
+  if (!categoriaId) {
+    return res.status(400).json({ success: false, message: "ID inválido" });
+  }
+
+  try {
+    const categoria = await prisma.categoria.findUnique({ where: { id: categoriaId } });
+    if (!categoria) {
+      return res.status(404).json({ success: false, message: "Categoría no encontrada" });
+    }
+
+    // Bloquear eliminación de estáticas
+    if (categoriasEstaticas.includes(categoria.nombre)) {
+      return res.status(403).json({ success: false, message: "No se puede eliminar esta categoría predeterminada" });
+    }
+
+    await prisma.categoria.delete({ where: { id: categoriaId } });
+    res.json({ success: true, message: "Categoría eliminada" });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Error al eliminar categoría" });
+  }
+});
+
+
+
+app.post("/comentario", async (req, res) => {
+  let { userId, bookId, clubId, content } = req.body;
+
+  console.log("Datos recibidos:", req.body); // Depuración
+
+  // Convertir a número porque vienen como string del frontend
+  userId = Number(userId);
+  bookId = Number(bookId);
+  clubId = Number(clubId);
+
+  if (!userId || !bookId || !clubId || !content) {
+    return res.status(400).json({ success: false, message: "Faltan datos" });
+  }
+  try {
+    // Verificar existencia de usuario, libro y club antes de crear el comentario
+    const user = await prisma.user.findUnique({ where: { id: userId } });
+    const book = await prisma.book.findUnique({ where: { id: bookId } });
+    const club = await prisma.club.findUnique({ where: { id: clubId } });
+
+    console.log("Usuario encontrado:", user); // Depuración
+    console.log("Libro encontrado:", book); // Depuración
+    console.log("Club encontrado:", club); // Depuración
+
+    if (!user || !book || !club) {
+      return res.status(404).json({ success: false, message: "Usuario, libro o club no encontrado" });
+    }
+
+    const comentario = await prisma.comment.create({
+      data: {
+        content: content,
+        user: { connect: { id: userId } },
+        book: { connect: { id: bookId } },
+        club: { connect: { id: clubId } }
+      }
+    });
+
+    res.json({ success: true, comentario });
+  } catch (error) {
+    console.error("Error al crear comentario:", error); // Depuración
+    res.status(500).json({ success: false, message: "Error al crear comentario", error: error.message });
+  }
+});
+app.delete("/comentario/:id", async (req, res) => {
+  const comentarioId = Number(req.params.id);
+  if (!comentarioId) {
+    return res.status(400).json({ success: false, message: "ID de comentario inválido" });
+  }
+  try {
+    const comentario = await prisma.comment.findUnique({ where: { id: comentarioId } });
+    if (!comentario) {
+      return res.status(404).json({ success: false, message: "Comentario no encontrado" });
+    }
+    await prisma.comment.delete({ where: { id: comentarioId } });
+    res.json({ success: true, message: "Comentario eliminado" });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Error al eliminar comentario" });
+  }
+});
+
+app.get("/comentario/book/:bookId/club/:clubId", async (req, res) => {
+  const bookId = Number(req.params.bookId);
+  const clubId = Number(req.params.clubId);
+  if (!bookId || !clubId) {
+    return res.status(400).json({ success: false, message: "ID de libro o club inválido" });
+  }
+  try {
+    const comentarios = await prisma.comment.findMany({
+      where: { bookId, clubId },
+      include: { user: { select: { username: true } } }
+    });
+    res.json({ success: true, comentarios });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Error al obtener comentarios" });
+  }
+});
+
+// app.js (Bloque de código a AÑADIR)
+// =======================================================
+// NUEVO ENDPOINT PARA CAMBIAR CONTRASEÑA
+// =======================================================
+app.post("/changePassword", async (req, res) => {
+    const { currentUsername, currentPassword, newPassword } = req.body;
+
+    if (!currentUsername || !currentPassword || !newPassword) {
+        return res.status(400).json({ success: false, message: "Faltan la contraseña actual o la nueva contraseña." });
+    }
+
+    try {
+        // 1. Buscar el usuario
+        const user = await prisma.user.findUnique({ where: { username: currentUsername } });
+
+        if (!user) {
+            return res.status(404).json({ success: false, message: "Usuario no encontrado." });
+        }
+
+        // 2. Verificar la contraseña actual (CRÍTICO: usa bcrypt.compare)
+        const isPasswordValid = await bcrypt.compare(currentPassword, user.password);
+        
+        if (!isPasswordValid) {
+            return res.status(401).json({ success: false, message: "Contraseña actual incorrecta." });
+        }
+
+        // 3. Hashear la nueva contraseña
+        const salt = await bcrypt.genSalt(10);
+        const hashedNewPassword = await bcrypt.hash(newPassword, salt);
+
+        // 4. Actualizar la contraseña en la base de datos
+        await prisma.user.update({
+            where: { username: currentUsername },
+            data: { password: hashedNewPassword }
+        });
+
+        res.json({ success: true, message: "Contraseña actualizada con éxito." });
+
+    } catch (error) {
+        console.error("Error al cambiar contraseña:", error);
+        res.status(500).json({ success: false, message: "Error interno del servidor al procesar el cambio de contraseña." });
+    }
+});
+
+module.exports = app;
 
 module.exports = app;
 

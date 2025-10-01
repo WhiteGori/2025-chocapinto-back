@@ -70,103 +70,32 @@ const solicitudesData = [
 ];
 
 async function main() {
-  console.log("🌱 Seeding Users...");
-  for (const u of usersData) {
-    await prisma.user.upsert({
-      where: { id: u.id },
-      update: {
-        username: u.username,
-        email: u.email,
-        password: u.password,
-        role: u.role,
-      },
-      create: {
-        id: u.id,
-        username: u.username,
-        email: u.email,
-        password: u.password,
-        role: u.role,
-      },
+  // Insertar categorías por defecto
+  const categorias = [
+    "Ficción",
+    "No Ficción",
+    "Ciencia Ficción",
+    "Fantasía",
+    "Ensayo"
+  ];
+  for (const nombre of categorias) {
+    await prisma.categoria.upsert({
+      where: { nombre },
+      update: {},
+      create: { nombre }
     });
   }
 
-  console.log("🌱 Seeding Books...");
-  for (const b of booksData) {
-    await prisma.book.upsert({
-      where: { id: b.id },
-      update: {
-        title: b.title,
-        author: b.author,
-        id_api: b.id_api,
-        portada: b.portada,
-      },
-      create: {
-        id: b.id,
-        title: b.title,
-        author: b.author,
-        id_api: b.id_api,
-        portada: b.portada,
-      },
-    });
-  }
-
-  console.log("🌱 Seeding Clubs...");
-  for (const c of clubsData) {
-    await prisma.club.upsert({
-      where: { id: c.id },
-      update: {
-        name: c.name,
-        description: c.description,
-        id_owner: c.id_owner,
-      },
-      create: {
-        id: c.id,
-        name: c.name,
-        description: c.description,
-        id_owner: c.id_owner,
-      },
-    });
-  }
-
-  // Many-to-many relations (implicit) via connect
-  console.log("🔗 Linking Club Members...");
-  for (const rel of clubMembersData) {
-    // Prisma implicit m2m tables are not exposed; connect via update on Club (or User)
-    await prisma.club.update({
-      where: { id: rel.A },         // A = Club id (según dump)
-      data: { members: { connect: { id: rel.B } } }, // B = User id
-    }).catch(() => {}); // ignore if already linked
-  }
-
-  console.log("🔗 Linking Club Books...");
-  for (const rel of clubBooksData) {
-    await prisma.club.update({
-      where: { id: rel.A },         // A = Club id
-      data: { books: { connect: { id: rel.B } } },   // B = Book id
-    }).catch(() => {});
-  }
-
-  console.log("🌱 Seeding ClubSolicitud...");
-  for (const s of solicitudesData) {
-    await prisma.clubSolicitud.upsert({
-      where: { id: s.id },
-      update: {
-        clubId: s.clubId,
-        userId: s.userId,
-        estado: s.estado,
-        createdAt: s.createdAt ? new Date(s.createdAt) : undefined,
-      },
-      create: {
-        id: s.id,
-        clubId: s.clubId,
-        userId: s.userId,
-        estado: s.estado,
-        createdAt: s.createdAt ? new Date(s.createdAt) : undefined,
-      },
-    });
-  }
-
-  console.log("✅ Seed completo");
+  await prisma.book.createMany({
+    data: [
+      { title: "Cien años de soledad", author: "Gabriel García Márquez" },
+      { title: "Don Quijote de la Mancha", author: "Miguel de Cervantes Saavedra" },
+      { title: "La sombra del viento", author: "Carlos Ruiz Zafón" },
+      { title: "Rayuela", author: "Julio Cortázar" },
+      { title: "Ficciones", author: "Jorge Luis Borges" },
+      { title: "Como agua para chocolate", author: "Laura Esquivel" }
+    ],
+  });
 }
 
 main()
