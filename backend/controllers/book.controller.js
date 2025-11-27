@@ -7,7 +7,7 @@ const addBookToClub = async (req, res) => {
   try {
     const { title, author, portada, thumbnail, id_api, username, categorias } = req.body;
     
-    // El clubId puede venir del body o de los params de la URL
+    // El clubId puede venir del body o de los params de la URL.
     const clubId = req.body.clubId || req.params.id;
 
     console.log("Datos recibidos en addBookToClub:", req.body);
@@ -555,66 +555,96 @@ const getAllBooks = async (req, res) => {
   }
 };
 
+// controllers/book.controller.js
+
+// controllers/book.controller.js
+
 const searchCursos = async (req, res) => {
     try {
         const { query } = req.query;
         
-        console.log("=== SEARCH CURSOS ===");
-        console.log("Query recibida:", query);
-        
-        if (!query) {
-            return res.status(400).json({ success: false, message: "Query requerido" });
-        }
+        // 1. Configuración Exacta (La que te pasaron)
+        const SUPABASE_URL = "https://apjepniceyfghladqqxg.supabase.co/rest/v1/get_modulos";
+        const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFwamVwbmljZXlmZ2hsYWRxcXhnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTc4NjE5NjcsImV4cCI6MjA3MzQzNzk2N30.gVnCO7ALvbF3Zol9k-R6k-CyPDh8-7KjJiqRuU5YVRk";
 
-        // 1. Petición a la API falsa (json-server)
-        // Primero intentamos obtener todos los cursos y filtrar localmente
-        let apiUrl = `http://localhost:3001/cursos`;
-        console.log("URL a consultar:", apiUrl);
-        
-        const response = await fetch(apiUrl);
-        console.log("Respuesta status:", response.status, response.statusText);
+        // 2. URL Limpia (Sin filtros raros para evitar el error de Cloudflare)
+        // Solo agregamos ?select=* para asegurar que traiga las columnas
+        const url = `${SUPABASE_URL}?select=*`;
 
+        console.log("🔗 Conectando a Supabase...");
+
+        // 3. Petición Fetch
+        const response = await fetch(url, {
+            method: "GET",
+            headers: {
+                "apikey": SUPABASE_KEY,
+                "Authorization": `Bearer ${SUPABASE_KEY}`,
+                "Content-Type": "application/json" // Por si acaso
+            }
+        });
+        
         if (!response.ok) {
-            console.log("Error en response:", response.status, response.statusText);
-            throw new Error(`Error en la API de cursos: ${response.status} ${response.statusText}`);
+            // Si falla, intentamos leer el texto del error
+            const errorText = await response.text();
+            console.error("❌ Error Supabase:", response.status, errorText);
+            throw new Error(`Error API externa: ${response.status}`);
         }
         
-        const todosCursos = await response.json();
-        console.log("Todos los cursos obtenidos:", todosCursos);
+        const cursosRaw = await response.json();
         
-        // Filtrar localmente por coincidencias en el nombre
-        const cursosRaw = todosCursos.filter(curso => 
-            curso.nombre_curso.toLowerCase().includes(query.toLowerCase())
-        );
-        console.log("Cursos filtrados:", cursosRaw);        // 2. MAPEO: Disfrazar los cursos de libros
-        // Esto hace que tu frontend no se rompa
-        const cursosComoLibros = cursosRaw.map(curso => ({
-            title: curso.nombre_curso,        // Mapeamos nombre -> title
-            author: "señasApp",
-            portada: ""
-,            id_api: curso.id_externo,         // ID externo para guardarlo despues
+        // Debug: Ver qué propiedades tienen realmente los cursos
+        if (cursosRaw.length > 0) {
+            console.log("📦 Ejemplo de curso recibido:", Object.keys(cursosRaw[0]));
+        }
 
-            descripcion: curso.descripcion || "Curso importado"
+        // 4. FILTRADO LOCAL (Más seguro)
+        // Filtramos aquí en tu servidor en lugar de en la URL
+        let cursosFiltrados = cursosRaw;
+        
+        if (query) {
+            const queryLower = query.toLowerCase();
+            cursosFiltrados = cursosRaw.filter(curso => {
+                // Buscamos en las propiedades probables (ajusta esto si ves el log)
+                const titulo = curso.nombre || curso.titulo || curso.name || curso.descripcion || "";
+                return titulo.toLowerCase().includes(queryLower);
+            });
+        }
+
+        // 5. MAPEO (Adaptar a tu formato de Libro)
+        const cursosComoLibros = cursosFiltrados.map(curso => ({
+            // Intentamos encontrar el título en varias propiedades posibles
+            title: curso.nombre || curso.titulo || curso.modulo || "Curso sin título", 
+            
+            id_api: curso.id, 
+            
+            author: "señasApp", 
+            
+            // Intentamos encontrar imagen
+            portada:"../images/senas.png", 
+            
+            descripcion: curso.descripcion || "Curso de SeñasApp"
         }));
 
-        console.log("Cursos transformados:", cursosComoLibros);
-
-        // 3. Devolvemos los datos ya "disfrazados"
+        console.log(`✅ Encontrados ${cursosComoLibros.length} cursos.`);
         res.json({ success: true, cursos: cursosComoLibros });
 
     } catch (error) {
-        console.error("Error completo al buscar cursos:", error);
-        res.status(500).json({ success: false, message: "Error al buscar cursos: " + error.message, cursos: [] });
+        console.error("💥 Error en searchCursos:", error.message);
+        // Devolvemos array vacío para que el front no se rompa
+        res.status(500).json({ success: false, message: "Error buscando cursos", cursos: [] });
     }
 };
+
+
+
+
 const agregarCursoComoLibro = async (req, res) => {
     // 1. Obtener datos de la URL y del Body
     const clubId = parseInt(req.params.id); // Viene de /club/:id/...
     const { title, id_api, username } = req.body; 
     
-    // Valores por defecto (Hardcodeados)
-    const AUTHOR_DEFAULT = "FinanzaApp";
-    const PORTADA_DEFAULT = "https://placehold.co/150"; // Imagen genérica
+    const AUTHOR_DEFAULT = "señasApp";
+    const PORTADA_DEFAULT = "/images/señas.png";
 
     try {
         // 2. Buscar al usuario que está agregando el curso
